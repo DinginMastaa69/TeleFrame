@@ -1,6 +1,6 @@
-const Telegraf = require("telegraf");
-const Telegram = require("telegraf/telegram");
-const Extra = require('telegraf/extra')
+const { Telegraf } = require("telegraf");
+const { Telegram } = require("telegraf");
+const { Extra } = require('telegraf')
 const download = require("image-downloader");
 const moment = require("moment");
 const exec = require("child_process").exec;
@@ -103,8 +103,7 @@ var Bot = class {
         let fileExtension = '.' + link.split('.').pop();
 
         if (fileExtension !== '.mp4' || config.showVideos) {
-          download
-            .image({
+          download({
               url: link,
               dest: config.imageFolder + "/" + moment().format("x") + fileExtension
             })
@@ -196,10 +195,18 @@ var Bot = class {
   startBot() {
     //Start bot
     var self = this;
-    this.bot.startPolling(30, 100, null, () =>
-      setTimeout(() => self.startBot(), 30000)
-    );
-    this.logger.info("Bot started!");
+    this.bot.launch()
+      .then(() => {
+        this.logger.info("Bot started!");
+      })
+      .catch(err => {
+        this.logger.error("Bot failed to start:", err);
+        setTimeout(() => self.startBot(), 30000);
+      });
+    
+    // Enable graceful stop
+    process.once('SIGINT', () => this.bot.stop('SIGINT'));
+    process.once('SIGTERM', () => this.bot.stop('SIGTERM'));
   }
 
   newImage(src, sender, caption, chatId, chatName, messageId) {

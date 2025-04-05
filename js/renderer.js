@@ -1,5 +1,6 @@
 // Imports
-const {remote, ipcRenderer, webFrame} = require("electron");
+const { ipcRenderer, webFrame } = require("electron");
+const remote = require('@electron/remote');
 const $ = require("jquery");
 window.jQuery = $;
 const Swal = require("sweetalert2");

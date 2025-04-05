@@ -1,5 +1,9 @@
 const exec = require("child_process").execSync;
 const { app, BrowserWindow, ipcMain } = require("electron");
+// Disable Chromium sandbox - use only in secure environments
+app.commandLine.appendSwitch('no-sandbox');
+const remoteMain = require('@electron/remote/main');
+remoteMain.initialize();
 const { logger, rendererLogger } = require("./js/logger");
 const telebot = require("./js/bot");
 const imagewatcher = require("./js/imageWatchdog");
@@ -39,9 +43,12 @@ function createWindow() {
     height: 600,
     webPreferences: {
       nodeIntegration: true,
+      contextIsolation: false,
       enableRemoteModule: true
     },
   });
+  
+  remoteMain.enable(win.webContents);
 
   win.setFullScreen(config.fullscreen);
   // and load the index.html of the app.
