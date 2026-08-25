@@ -51,9 +51,9 @@
       {"name": "echo", "command": "echo test", "enable": true},
       {"name": "reboot", "command": "sudo reboot", "enable": true},
       {"name": "shutdown", "command": "sudo shutdown -h now ", "enable": true},
-      {"name": "restart", "command": "pm2 restart all", "enable": true},
-      {"name": "startOpenvpn", "command": "systemctl openvpn start", "enable": true},
-      {"name": "stopOpenvpn", "command": "systemctl openvpn stop", "enable": true}
+      {"name": "restart", "command": "systemctl --user restart teleframe.service", "enable": true},
+      {"name": "startOpenvpn", "command": "sudo systemctl start openvpn", "enable": true},
+      {"name": "stopOpenvpn", "command": "sudo systemctl stop openvpn", "enable": true}
     ]
   }
 }

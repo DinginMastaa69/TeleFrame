@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 
-# This is an installer script for TeleFrame. It works well enough
-# that it can detect if you have Node installed, run a binary script
-# and then download and run TeleFrame.
+# Installer for TeleFrame on Raspberry Pi OS 12 (bookworm) / 13 (trixie).
+#
+# Tested on: Raspberry Pi 4 Model B, Raspberry Pi OS 13.6 (arm64), labwc session.
+#
+# It can be run in two ways:
+#   1. from inside an existing clone:  bash tools/install_raspberry.sh
+#   2. standalone, which clones into ~/TeleFrame:
+#      bash -c "$(curl -sL https://raw.githubusercontent.com/LukeSkywalker92/TeleFrame/master/tools/install_raspberry.sh)"
+
+set -u
 
 echo -e "\e[0m"
 echo '_________ _______  _        _______  _______  _______  _______  _______  _______ '
@@ -15,154 +22,146 @@ echo '   | |   | (____/\| (____/\| (____/\| )      | ) \ \__| )   ( || )   ( || 
 echo '   )_(   (_______/(_______/(_______/|/       |/   \__/|/     \||/     \|(_______/'
 echo -e "\e[0m"
 
-# Define the tested version of Node.js.
-NODE_TESTED="v10.15.2"
+# Node.js version to install. Electron >= 40 requires node >= 22.12,
+# Debian trixie only ships node 20, so NodeSource is used.
+NODE_MAJOR="24"
+NODE_MINIMUM="v22.12.0"
 
-# Determine which Pi is running.
 ARM=$(uname -m)
 
 # Installation as root account is not supported
 if [ "$EUID" == "0" ]; then
 	echo -e "\e[91mSorry, automated installation as user root is not supported."
-	echo -e "\e[91mPlease run TeleFrame install script as user pi."
-	exit;
+	echo -e "\e[91mPlease run the TeleFrame install script as a normal user.\e[0m"
+	exit 1
 fi
 
-# Check the Raspberry Pi version.
-if [ "$ARM" != "armv7l" ]; then
-	echo -e "\e[91mSorry, your Raspberry Pi is not supported."
-	echo -e "\e[91mPlease run TeleFrame on a Raspberry Pi 2 or 3."
-	echo -e "\e[91mIf this is a Pi Zero, you are in the same boat as the original Raspberry Pi. You must run in server only mode."
-	exit;
-fi
-
-# Get user wishes
-read -p "Do you want to disable the screensaver (y/N)? " screensaverchoice
-read -p "Do you want your mouse pointer to be autohided (y/N)? " mousechoice
-read -p "Do you want to use pm2 for auto starting of your TeleFrame (y/N)? " pmchoice
-if [[ $pmchoice =~ ^[Yy]$ ]]; then
-    read -p "Do you want pm2 to wait for internet connection before auto starting your TeleFrame (y/N)? " pmchoiceInternet
-fi
-read -p "Please tell me your telegram bot token. Token:  " token
+# Check the architecture. Raspberry Pi OS is 64 bit (aarch64) by default since
+# Bookworm; the old installer refused anything but armv7l and therefore failed
+# on every modern Pi.
+case "$ARM" in
+	aarch64|arm64|armv7l)
+		echo -e "\e[92mDetected architecture: $ARM\e[0m"
+		;;
+	*)
+		echo -e "\e[91mSorry, the architecture '$ARM' is not supported."
+		echo -e "\e[91mTeleFrame needs a Raspberry Pi 2/3/4/5 (armv7l or arm64)."
+		echo -e "\e[91mOn a Pi Zero / Pi 1 you can still use the bot only mode.\e[0m"
+		exit 1
+		;;
+esac
 
 # Define helper methods.
-function version_gt() { test "$(echo "$@" | tr " " "\n" | sort -V | head -n 1)" != "$1"; }
 function command_exists () { type "$1" &> /dev/null ;}
+function version_gt() { test "$(echo "$@" | tr " " "\n" | sort -V | head -n 1)" != "$1"; }
+
+# Get user wishes
+read -p "Do you want TeleFrame to start automatically (systemd user service) (y/N)? " autostartchoice
+read -p "Please tell me your telegram bot token. Token:  " token
 
 # Update before first apt-get
 echo -e "\e[96mUpdating packages ...\e[90m"
 sudo apt-get update || echo -e "\e[91mUpdate failed, carrying on installation ...\e[90m"
 
-# Installing helper tools
+# Helper tools.
+# sox provides `rec`, which is used for the voice reply feature.
 echo -e "\e[96mInstalling helper tools ...\e[90m"
-sudo apt-get --assume-yes install curl wget git build-essential unzip unclutter x11-xserver-utils sox libsox-fmt-all || exit
+sudo apt-get --assume-yes install curl wget git build-essential unzip sox libsox-fmt-all || exit 1
 
-# Enable the Open GL driver to decrease Electron's CPU usage
-sudo /bin/su -c "echo 'dtoverlay=vc4-fkms-v3d' >> /boot/config.txt"
+# Electron runtime libraries. All of these are already present on a Raspberry
+# Pi OS Desktop image; the list matters for Lite installations.
+echo -e "\e[96mInstalling Electron runtime libraries ...\e[90m"
+sudo apt-get --assume-yes install \
+	libnss3 libgbm1 libdrm2 libxkbcommon0 libasound2t64 libnotify4 \
+	libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgtk-3-0t64 \
+	|| echo -e "\e[93mSome runtime libraries could not be installed - continuing.\e[90m"
+
+# The KMS driver has been the default since Bullseye; dtoverlay=vc4-fkms-v3d
+# is deprecated and /boot/config.txt moved to /boot/firmware/config.txt.
+CONFIG_TXT="/boot/firmware/config.txt"
+[ -f "$CONFIG_TXT" ] || CONFIG_TXT="/boot/config.txt"
+if [ -f "$CONFIG_TXT" ] && ! grep -q "^dtoverlay=vc4-kms-v3d" "$CONFIG_TXT"; then
+	echo -e "\e[93mNote: '${CONFIG_TXT}' does not enable the KMS driver."
+	echo -e "\e[93mAdd 'dtoverlay=vc4-kms-v3d' there if the display stays black.\e[0m"
+fi
 
 # Check if we need to install or upgrade Node.js.
 echo -e "\e[96mCheck current Node installation ...\e[0m"
 NODE_INSTALL=false
 if command_exists node; then
-	echo -e "\e[0mNode currently installed. Checking version number.";
 	NODE_CURRENT=$(node -v)
-	echo -e "\e[0mMinimum Node version: \e[1m$NODE_TESTED\e[0m"
+	echo -e "\e[0mMinimum Node version: \e[1m$NODE_MINIMUM\e[0m"
 	echo -e "\e[0mInstalled Node version: \e[1m$NODE_CURRENT\e[0m"
-	if version_gt $NODE_TESTED $NODE_CURRENT; then
+	if version_gt "$NODE_MINIMUM" "$NODE_CURRENT"; then
 		echo -e "\e[96mNode should be upgraded.\e[0m"
 		NODE_INSTALL=true
-
-		# Check if a node process is currenlty running.
-		# If so abort installation.
-		if pgrep "node" > /dev/null; then
-			echo -e "\e[91mA Node process is currently running. Can't upgrade."
-			echo "Please quit all Node processes and restart the installer."
-			exit;
-		fi
-
 	else
 		echo -e "\e[92mNo Node.js upgrade necessary.\e[0m"
 	fi
-
 else
-	echo -e "\e[93mNode.js is not installed.\e[0m";
+	echo -e "\e[93mNode.js is not installed.\e[0m"
 	NODE_INSTALL=true
 fi
 
-# Install or upgrade node if necessary.
 if $NODE_INSTALL; then
-
-	echo -e "\e[96mInstalling Node.js ...\e[90m"
-
-	# Fetch the latest version of Node.js from the selected branch
-	# The NODE_STABLE_BRANCH variable will need to be manually adjusted when a new branch is released. (e.g. 7.x)
-	# Only tested (stable) versions are recommended as newer versions could break TeleFrame.
-
-	NODE_STABLE_BRANCH="10.x"
-	curl -sL https://deb.nodesource.com/setup_$NODE_STABLE_BRANCH | sudo -E bash -
-	sudo apt-get install -y nodejs
-	echo -e "\e[92mNode.js installation Done!\e[0m"
+	echo -e "\e[96mInstalling Node.js ${NODE_MAJOR}.x ...\e[90m"
+	curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash - || exit 1
+	sudo apt-get install -y nodejs || exit 1
+	echo -e "\e[92mNode.js installation done - $(node -v)\e[0m"
 fi
 
-# Install TeleFrame
-cd ~
-if [ -d "$HOME/TeleFrame" ] ; then
-	echo -e "\e[93mIt seems like TeleFrame is already installed."
-	echo -e "To prevent overwriting, the installer will be aborted."
-	echo -e "Please rename the \e[1m~/TeleFrame\e[0m\e[93m folder and try again.\e[0m"
-	echo ""
-	echo -e "If you want to upgrade your installation run \e[1m\e[97mgit pull\e[0m from the ~/TeleFrame directory."
-	echo ""
-	exit;
-fi
-
-echo -e "\e[96mCloning TeleFrame ...\e[90m"
-if git clone --depth=1 https://github.com/LukeSkywalker92/TeleFrame.git; then
-	echo -e "\e[92mCloning TeleFrame Done!\e[0m"
+# Determine the TeleFrame directory. When the script runs from inside a clone
+# that clone is used, otherwise TeleFrame is cloned into ~/TeleFrame.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+if [ -n "$SCRIPT_PATH" ] && [ -f "$(dirname "$SCRIPT_PATH")/../package.json" ]; then
+	TELEFRAME_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+	echo -e "\e[92mUsing existing TeleFrame checkout at $TELEFRAME_DIR\e[0m"
 else
-	echo -e "\e[91mUnable to clone TeleFrame."
-	exit;
+	TELEFRAME_DIR="$HOME/TeleFrame"
+	if [ -d "$TELEFRAME_DIR" ]; then
+		echo -e "\e[93mIt seems like TeleFrame is already installed at $TELEFRAME_DIR."
+		echo -e "To prevent overwriting, the installer will be aborted."
+		echo -e "If you want to upgrade, run \e[1m\e[97mgit pull && npm install\e[0m\e[93m there.\e[0m"
+		exit 1
+	fi
+	echo -e "\e[96mCloning TeleFrame ...\e[90m"
+	git clone --depth=1 https://github.com/LukeSkywalker92/TeleFrame.git "$TELEFRAME_DIR" || {
+		echo -e "\e[91mUnable to clone TeleFrame.\e[0m"; exit 1; }
 fi
 
-cd ~/TeleFrame  || exit
+cd "$TELEFRAME_DIR" || exit 1
+
+# Note: no --arch / npm_config_arch juggling any more. `uname -m` returns
+# "aarch64", which is not a valid npm architecture ("arm64" is), and on a
+# native build npm resolves the architecture correctly all by itself.
 echo -e "\e[96mInstalling dependencies ...\e[90m"
-# if npm_config_arch is'nt set add it to users .profile
-[ -z "$npm_config_arch" ] && (echo -e "# npm archive configuration\nexport npm_config_arch=\$(uname -m)" >> ~/.profile)
-if npm install --arch=$ARM; then
-	echo -e "\e[92mDependencies installation Done!\e[0m"
+if npm install; then
+	echo -e "\e[92mDependencies installation done!\e[0m"
 else
-	echo -e "\e[91mUnable to install dependencies!"
-	exit;
+	echo -e "\e[91mUnable to install dependencies!\e[0m"
+	exit 1
 fi
 
-echo -e "\e[96mInstalling electron globally ...\e[90m"
-if sudo npm install --arch=$ARM -g electron --unsafe-perm=true --allow-root; then
-	echo -e "\e[92mElectron installation Done!\e[0m"
-else
-	echo -e "\e[91mUnable to install electron!"
-	exit;
+# Create config containing the token, if there is none yet
+if [ -n "$token" ] && [ ! -f config/config.json ]; then
+	printf '{\n  "botToken": "%s"\n}\n' "$token" > config/config.json
+	echo -e "\e[92mWrote config/config.json\e[0m"
+elif [ -f config/config.json ]; then
+	echo -e "\e[93mconfig/config.json already exists - not touching it.\e[0m"
 fi
-
-# Create config for start TeleFrame containing the token
-echo -e "{\n  \"botToken\": \"$token\"\n}" > config/config.json
 
 # Create image directory
-echo -e "\e[96mCreating image directory ...\e[90m"
-mkdir images
+mkdir -p images
 
-# Check if plymouth is installed (default with PIXEL desktop environment), then install custom splashscreen.
+# Check if plymouth is installed, then install the custom splashscreen.
 echo -e "\e[96mCheck plymouth installation ...\e[0m"
 if command_exists plymouth; then
 	THEME_DIR="/usr/share/plymouth/themes"
-	echo -e "\e[90mSplashscreen: Checking themes directory.\e[0m"
 	if [ -d $THEME_DIR ]; then
-		echo -e "\e[90mSplashscreen: Create theme directory if not exists.\e[0m"
-		if [ ! -d $THEME_DIR/TeleFrame ]; then
-			sudo mkdir $THEME_DIR/TeleFrame
-		fi
-
-		if sudo cp ~/TeleFrame/splashscreen/splash.png $THEME_DIR/TeleFrame/splash.png && sudo cp ~/TeleFrame/splashscreen/TeleFrame.plymouth $THEME_DIR/TeleFrame/TeleFrame.plymouth && sudo cp ~/TeleFrame/splashscreen/TeleFrame.script $THEME_DIR/TeleFrame/TeleFrame.script; then
-			echo -e "\e[90mSplashscreen: Theme copied successfully.\e[0m"
+		sudo mkdir -p $THEME_DIR/TeleFrame
+		if sudo cp "$TELEFRAME_DIR/splashscreen/splash.png" $THEME_DIR/TeleFrame/splash.png \
+			&& sudo cp "$TELEFRAME_DIR/splashscreen/TeleFrame.plymouth" $THEME_DIR/TeleFrame/TeleFrame.plymouth \
+			&& sudo cp "$TELEFRAME_DIR/splashscreen/TeleFrame.script" $THEME_DIR/TeleFrame/TeleFrame.script; then
 			if sudo plymouth-set-default-theme -R TeleFrame; then
 				echo -e "\e[92mSplashscreen: Changed theme to TeleFrame successfully.\e[0m"
 			else
@@ -175,35 +174,19 @@ if command_exists plymouth; then
 		echo -e "\e[91mSplashscreen: Themes folder doesn't exist!\e[0m"
 	fi
 else
-	echo -e "\e[93mplymouth is not installed.\e[0m";
+	echo -e "\e[93mplymouth is not installed.\e[0m"
 fi
 
-# Autohide mouse cursor
-if [[ $mousechoice =~ ^[Yy]$ ]]; then
-    sudo /bin/su -c "echo '@unclutter -display :0 -idle 3 -root -noevents' >> /etc/xdg/lxsession/LXDE-pi/autostart"
-fi
-
-# Disable screensaver
-if [[ $screensaverchoice =~ ^[Yy]$ ]]; then
-    sudo /bin/su -c "echo '@xset s noblank' >> /etc/xdg/lxsession/LXDE-pi/autostart"
-		sudo /bin/su -c "echo '@xset s off' >> /etc/xdg/lxsession/LXDE-pi/autostart"
-		sudo /bin/su -c "echo '@xset -dpms' >> /etc/xdg/lxsession/LXDE-pi/autostart"
-		sudo /bin/su -c "echo 'xserver-command=X -s 0 -dpms' >> /etc/lightdm/lightdm.conf"
-fi
-
-# Use pm2 control like a service TeleFrame
-if [[ $pmchoice =~ ^[Yy]$ ]]; then
-    sudo npm install -g pm2
-    sudo su -c "env PATH=$PATH:/usr/bin pm2 startup systemd -u pi --hp /home/pi"
-		if [[ $pmchoiceInternet =~ ^[Yy]$ ]]; then
-    	pm2 start ~/TeleFrame/tools/pm2_TeleFrame_waitForInternet.json
-		else
-			pm2 start ~/TeleFrame/tools/pm2_TeleFrame.json
-		fi
-    pm2 save
+# Autostart via systemd user service.
+# Screen blanking and cursor hiding need no treatment any more: unclutter and
+# xset are X11 tools, css/style.css already sets `cursor: none`, and the labwc
+# session does not blank the screen by default.
+if [[ $autostartchoice =~ ^[Yy]$ ]]; then
+	bash "$TELEFRAME_DIR/tools/install_service.sh"
 fi
 
 echo " "
-echo -e "\e[92mWe're ready! Run \e[1m\e[97mDISPLAY=:0 npm start\e[0m\e[92m from the ~/TeleFrame directory to start your TeleFrame.\e[0m"
-echo " "
+echo -e "\e[92mWe're ready!\e[0m"
+echo -e "Start TeleFrame with \e[1m\e[97msystemctl --user start teleframe\e[0m"
+echo -e "or manually from $TELEFRAME_DIR with \e[1m\e[97mnpm start\e[0m."
 echo " "

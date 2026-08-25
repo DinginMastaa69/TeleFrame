@@ -159,15 +159,24 @@ function createWindow() {
 
   if (config.botToken !== 'bot-disabled') {
     bot.startBot();
-    // stop long polling cleanly so `systemctl --user restart teleframe` and
-    // Ctrl-C do not leave a dangling getUpdates connection behind.
-    ['SIGINT', 'SIGTERM'].forEach((signal) => {
-      process.once(signal, () => {
-        logger.info(`Received ${signal}, stopping bot ...`);
-        bot.stopBot(signal);
-      });
-    });
   }
+
+  // Shut down cleanly on SIGINT/SIGTERM.
+  //
+  // This must be registered even when the bot is disabled: without a handler
+  // Electron dies from the default signal disposition and systemd reports the
+  // unit as failed ("status=5/TRAP") on every `systemctl --user stop`.
+  // Stopping the bot also releases the long polling connection, so a restart
+  // does not leave a dangling getUpdates request behind.
+  ['SIGINT', 'SIGTERM'].forEach((signal) => {
+    process.once(signal, () => {
+      logger.info(`Received ${signal}, shutting down ...`);
+      if (bot) {
+        bot.stopBot(signal);
+      }
+      app.quit();
+    });
+  });
 
   addonInterface.executeEventCallbacks('teleFrame-ready', {
     config: config,
