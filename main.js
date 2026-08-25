@@ -71,8 +71,15 @@ if (process.env.WAYLAND_DISPLAY && !app.commandLine.hasSwitch("ozone-platform"))
     "tools/teleframe.sh instead of `electron .`."
   );
 }
-// Sets the Wayland app_id / X11 WM_CLASS so compositor window rules can
-// address TeleFrame, e.g. to pin it to a specific output.
+// Sets the X11 WM_CLASS so window rules can address TeleFrame, e.g. to pin it
+// to a specific output.
+//
+// Note: this does NOT affect the Wayland app_id. Like --ozone-platform above,
+// the switch is appended too late - and under Wayland Electron derives the
+// app_id from the "name" field in package.json anyway, so it is "teleframe"
+// (verified with `wlrctl toplevel list`). Compositor rules have to match that.
+// labwc matches identifiers case-insensitively, so identifier="teleframe"
+// is the safe spelling. See "Pinning TeleFrame to one display" in the README.
 app.commandLine.appendSwitch("class", "TeleFrame");
 
 // Keep a global reference of the window object, if you don't, the window will

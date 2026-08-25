@@ -126,16 +126,39 @@ reach Telegram at boot time.
 
 ### Pinning TeleFrame to one display
 
-Under Wayland a client cannot choose its output. If more than one screen is
-connected, add a window rule to `~/.config/labwc/rc.xml` inside `<windowRules>`:
+Under Wayland a client cannot choose its output. With only the DSI panel
+connected this does not matter, but as soon as a second screen is attached
+labwc is free to put the frame on either one — usually the wrong one.
+
+**Copy the system configuration first.** Like `autostart`, labwc uses the *first*
+`rc.xml` it finds in the XDG hierarchy, so a user file replaces the system one
+completely. Creating it from scratch silently drops all default keybindings,
+mouse bindings and the theme:
+
+```sh
+mkdir -p ~/.config/labwc
+cp /etc/xdg/labwc/rc.xml ~/.config/labwc/rc.xml
+```
+
+Then add the rule inside the existing `<windowRules>` block:
 
 ```xml
-<windowRule identifier="TeleFrame">
+<windowRule identifier="teleframe">
   <action name="MoveToOutput" output="DSI-1" />
 </windowRule>
 ```
 
-`wlr-randr` lists the available output names.
+Apply it without logging out with `kill -HUP $(pgrep -x labwc)`, then restart
+TeleFrame.
+
+`wlr-randr` lists the available output names. The identifier is the Wayland
+`app_id`, which Electron takes from the `name` field of `package.json` and is
+therefore `teleframe` — *not* the `--class` value set in `main.js`, which only
+reaches XWayland. `wlrctl toplevel list` prints what the compositor actually
+sees. labwc matches identifiers case-insensitively.
+
+Note that labwc ignores `MoveToOutput` for windows that are already fullscreen,
+so the rule has to be in place before TeleFrame starts.
 
 ## Configuration
 
