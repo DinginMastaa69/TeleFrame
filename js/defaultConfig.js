@@ -170,15 +170,17 @@ var defaultConfig = {
 		},
 
 		// Admin-Action for Rebooting the device
+		// Note: needs passwordless sudo, see README ("Admin commands").
 		{name: "reboot", command: "sudo reboot", enable: true},
 		// Admin-Action for shuting the device down
 		{name: "shutdown", command: "sudo shutdown -h now ", enable: true},
 		// Admin-Action for restart the TeleFrame-Application
-		{name: "restart", command: "pm2 restart all", enable: true},
+		// (pm2 was replaced by a systemd user service)
+		{name: "restart", command: "systemctl --user restart teleframe.service", enable: true},
 		// Admin-Action for starting the OpenVPN-Client
-		{name: "startOpenvpn", command: "systemctl openvpn start", enable: true},
+		{name: "startOpenvpn", command: "sudo systemctl start openvpn", enable: true},
 		// Admin-Action for stoping the OpenVPN-Client
-		{name: "stopOpenvpn", command: "systemctl openvpn stop", enable: true}
+		{name: "stopOpenvpn", command: "sudo systemctl stop openvpn", enable: true}
     ]
   },
 

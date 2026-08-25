@@ -16,6 +16,18 @@ const newImageNotifyLed = (interface) => {
   let blinkTimerId;
 
   /**
+   * Build the command that drives the LED pin.
+   *
+   * WiringPi (`gpio`) no longer ships with Raspberry Pi OS, so `pinctrl` from
+   * the raspi-utils package is used instead. Both address the pin by its BCM
+   * GPIO number, so an existing `newLedGPIO` configuration keeps working.
+   * `op` configures the pin as an output, `dh`/`dl` drive it high/low.
+   * @param  {number} status 1 to switch the LED on, 0 to switch it off
+   * @return {string}        the command to execute
+   */
+  const setPin = (status) => `pinctrl set ${interface.config.newLedGPIO} op ${status ? 'dh' : 'dl'}`;
+
+  /**
    * Execute the system command async
    * @param  {string} cmd [description]
    */
@@ -48,20 +60,21 @@ const newImageNotifyLed = (interface) => {
       if (unseenCnt > 1) {
         interval /= 2;
       }
-      // start the timer to update status and execute the gpio command
+      // start the timer to update status and execute the pinctrl command
       let ledStatus = 0;
       blinkTimerId = setInterval(() => {
         ledStatus = (ledStatus === 1 ? 0 : 1);
-        execCmd(`gpio -g write ${interface.config.newLedGPIO} ${ledStatus}`);
+        execCmd(setPin(ledStatus));
       }, interval);
     } else {
       // turn led off
-      execCmd(`gpio -g write ${interface.config.newLedGPIO} 0`);
+      execCmd(setPin(0));
     }
   }
 
-  // initialize gpio. execSync throws an error if the command has failed
-  execSync(`gpio -g mode ${interface.config.newLedGPIO} out && gpio -g write ${interface.config.newLedGPIO} 0`, true);
+  // initialize the pin as a low output.
+  // execSync throws an error if the command has failed
+  execSync(setPin(0));
 
   // registser listeners
   interface.registerListener(['images-loaded', 'newImage', 'imageUnseenRemoved', 'imageDeleted'], updateLedStatus);

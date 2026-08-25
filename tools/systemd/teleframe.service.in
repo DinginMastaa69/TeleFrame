@@ -1,0 +1,30 @@
+[Unit]
+Description=TeleFrame digital picture frame
+Documentation=https://github.com/LukeSkywalker92/TeleFrame
+After=graphical-session.target
+PartOf=graphical-session.target
+# never give up restarting on an appliance
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@@REPO_DIR@@
+ExecStart=@@REPO_DIR@@/tools/teleframe.sh
+Restart=always
+RestartSec=5
+# Send SIGTERM only to the main process. With the default KillMode=control-group
+# systemd signals Chromium's zygote, GPU and renderer processes as well, which
+# makes the browser process die from a SIGTRAP instead of shutting down - every
+# `systemctl --user stop` then left the unit in "failed (signal)".
+KillMode=mixed
+# Chromium moves its browser process into an own systemd scope
+# (app-teleframe-<pid>.scope) a second or two after start, so from that point on
+# the log lines are no longer attributed to teleframe.service and
+# `journalctl --user-unit=teleframe.service` silently hides most of them -
+# every [Renderer] line, the shutdown messages, and usually "Bot started!".
+# The syslog identifier is bound to the stdout stream instead of the cgroup and
+# survives the move, which makes `journalctl -t teleframe` show the whole log.
+SyslogIdentifier=teleframe
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,5 +1,7 @@
+const fs = require("fs");
 const exec = require("child_process").execSync;
 const { app, BrowserWindow, ipcMain } = require("electron");
+const remoteMain = require("@electron/remote/main");
 const { logger, rendererLogger } = require("./js/logger");
 const telebot = require("./js/bot");
 const imagewatcher = require("./js/imageWatchdog");
@@ -12,6 +14,10 @@ const initAddonInterface = require('./js/addonInterface').initAddonInterface;
 
 logger.info("Configuring for: " +  screen.name);
 
+// initialize @electron/remote, which replaces the `remote` module that was
+// removed from the Electron core in v14.
+remoteMain.initialize();
+
 //create global variables
 global.config = config;
 global.screen = screen;
@@ -21,31 +27,91 @@ global.images = [];
 
 logger.info("Main app started ...");
 
-// switch off the LEDs
-if(config.switchLedsOff){
-   exec("sudo sh -c 'echo 0 > /sys/class/leds/led0/brightness'", { encoding: 'utf-8' });
-   exec("sudo sh -c 'echo 0 > /sys/class/leds/led1/brightness'", { encoding: 'utf-8' });
+/**
+ * Switch off the on board LEDs.
+ * Kernel 6.x on Raspberry Pi OS exposes them as ACT/PWR, the legacy names
+ * led0/led1 are gone. Missing LEDs (or a missing sudo rule) must not keep
+ * TeleFrame from starting, so every write is guarded.
+ */
+const switchLedsOff = () => {
+  ['ACT', 'PWR', 'led0', 'led1'].forEach((led) => {
+    const brightness = `/sys/class/leds/${led}/brightness`;
+    if (!fs.existsSync(brightness)) {
+      return;
+    }
+    try {
+      exec(`sudo sh -c 'echo 0 > ${brightness}'`, { encoding: 'utf-8' });
+      logger.info(`Switched off LED ${led}`);
+    } catch (error) {
+      logger.warn(`Could not switch off LED ${led}: ${error.message}`);
+    }
+  });
+};
+
+if (config.switchLedsOff) {
+  switchLedsOff();
 }
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
+// Note: the display platform CANNOT be selected from here. Chromium picks the
+// Ozone platform before this script runs, so app.commandLine.appendSwitch()
+// comes too late - the switch is stored but ignored. It has to be a real
+// command line argument, which is what tools/teleframe.sh (and therefore
+// `npm start`) passes.
+//
+// Warn when TeleFrame was started directly with `electron .` in a Wayland
+// session: Electron then defaults to X11/Xwayland, where ANGLE cannot create a
+// GL context on the Pi ("Could not create a backing OpenGL context") and the
+// window never appears.
+if (process.env.WAYLAND_DISPLAY && !app.commandLine.hasSwitch("ozone-platform")) {
+  logger.warn(
+    "WAYLAND_DISPLAY is set but Electron was started without --ozone-platform=wayland. " +
+    "The window will likely fail to open. Start TeleFrame with `npm start` or " +
+    "tools/teleframe.sh instead of `electron .`."
+  );
+}
+// Sets the X11 WM_CLASS so window rules can address TeleFrame, e.g. to pin it
+// to a specific output.
+//
+// Note: this does NOT affect the Wayland app_id. Like --ozone-platform above,
+// the switch is appended too late - and under Wayland Electron derives the
+// app_id from the "name" field in package.json anyway, so it is "teleframe"
+// (verified with `wlrctl toplevel list`). Compositor rules have to match that.
+// labwc matches identifiers case-insensitively, so identifier="teleframe"
+// is the safe spelling. See "Pinning TeleFrame to one display" in the README.
+app.commandLine.appendSwitch("class", "TeleFrame");
+
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let win;
 
 function createWindow() {
-  // Create the browser window.
+  // Create the browser window, using the resolution of the configured screen.
   win = new BrowserWindow({
-    width: 1024,
-    height: 600,
+    width: screen.xres || 1024,
+    height: screen.yres || 600,
     webPreferences: {
       nodeIntegration: true,
-      enableRemoteModule: true
+      // Required since Electron 12 so that nodeIntegration and
+      // @electron/remote are available in the renderer.
+      contextIsolation: false
     },
   });
+
+  // allow this window to use @electron/remote
+  remoteMain.enable(win.webContents);
 
   win.setFullScreen(config.fullscreen);
   // and load the index.html of the app.
   win.loadFile("index.html");
+
+  // reload request coming from the renderer (replaces remote.getCurrentWindow())
+  ipcMain.on("reloadWindow", () => {
+    if (win) {
+      win.reload();
+    }
+  });
 
   // get instance of webContents for sending messages to the frontend
   const emitter = win.webContents;
@@ -82,8 +148,9 @@ function createWindow() {
   var commandExecutor = new CommandExecutor(emitter, logger, ipcMain);
   commandExecutor.init();
 
+  var voiceReply = null;
   if (config.voiceReply !== null) {
-    var voiceReply = new voicerecorder(config, emitter, bot, logger, ipcMain, addonInterface);
+    voiceReply = new voicerecorder(config, emitter, bot, logger, ipcMain, addonInterface);
     voiceReply.init();
   }
 
@@ -100,6 +167,23 @@ function createWindow() {
   if (config.botToken !== 'bot-disabled') {
     bot.startBot();
   }
+
+  // Shut down cleanly on SIGINT/SIGTERM.
+  //
+  // This must be registered even when the bot is disabled: without a handler
+  // Electron dies from the default signal disposition and systemd reports the
+  // unit as failed ("status=5/TRAP") on every `systemctl --user stop`.
+  // Stopping the bot also releases the long polling connection, so a restart
+  // does not leave a dangling getUpdates request behind.
+  ['SIGINT', 'SIGTERM'].forEach((signal) => {
+    process.once(signal, () => {
+      logger.info(`Received ${signal}, shutting down ...`);
+      if (bot) {
+        bot.stopBot(signal);
+      }
+      app.quit();
+    });
+  });
 
   addonInterface.executeEventCallbacks('teleFrame-ready', {
     config: config,
@@ -122,7 +206,7 @@ function createWindow() {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on("ready", createWindow);
+app.whenReady().then(createWindow);
 
 // Quit when all windows are closed.
 app.on("window-all-closed", () => {

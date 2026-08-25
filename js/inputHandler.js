@@ -9,26 +9,44 @@ var InputHandler = class {
   }
 
   init() {
-    if (config.keys === null) {
+    if (this.config.keys === null) {
       this.logger.warn("Keyboard controls are disabeled");
       return;
     }
 
-    globalShortcut.register(config.keys.next, () => {
-      this.emitter.send("next");
-    });
+    const bindings = {
+      next: "next",
+      previous: "previous",
+      pause: "pause",
+      play: "play"
+    };
 
-    globalShortcut.register(config.keys.previous, () => {
-      this.emitter.send("previous");
-    });
+    let failed = [];
+    for (const action of Object.keys(bindings)) {
+      const accelerator = this.config.keys[action];
+      if (!accelerator) {
+        continue;
+      }
+      try {
+        if (!globalShortcut.register(accelerator, () => {
+          this.emitter.send(bindings[action]);
+        })) {
+          failed.push(accelerator);
+        }
+      } catch (error) {
+        failed.push(accelerator);
+      }
+    }
 
-    globalShortcut.register(config.keys.pause, () => {
-      this.emitter.send("pause");
-    });
-
-    globalShortcut.register(config.keys.play, () => {
-      this.emitter.send("play");
-    });
+    if (failed.length > 0) {
+      // globalShortcut needs an X11 grab and does not work on Wayland, which
+      // is the default session on Raspberry Pi OS 13 (labwc). The renderer
+      // handles the same keys via DOM events, so this is only a notice.
+      this.logger.warn(
+        `Could not register global shortcut(s) ${failed.join(", ")} - ` +
+        `expected on Wayland. TeleFrame handles these keys in the window instead.`
+      );
+    }
   }
 };
 
