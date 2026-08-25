@@ -3,7 +3,7 @@
 This example addon switches an LED when new images arrive. It can be used in normal operation, but there are better solutions to implement it if a GPIO package is also installed.
 
 Unfortunately, the available GPIO packages all have dependencies where problems may occur during installation.
-Therefore the switching of the LED was implemented via executing a system command using the `gpio` utility.
+Therefore the switching of the LED was implemented via executing a system command using the `pinctrl` utility.
 This should work on all Raspberry PI's. It is not very efficiently, but should be sufficient for demonstration purposes.
 
 ---
@@ -25,15 +25,17 @@ tools/addon_control.sh config newImageLED newLedGPIO <your LED GPIO port number>
 Then restart TeleFrame.
 
 
-**If you are using an Raspberry Pi 4B and want to try this example, make sure you have at least wiringPi version 2.52 installed.**
-To check the version use `gpio -v`.
+### Requirements
 
-You can use the following commands to update wiringPi:
-```sh
-WPI_DEB="$(mktemp)" &&
-wget -O "$WPI_DEB" 'https://project-downloads.drogon.net/wiringpi-latest.deb' && sudo dpkg -i "$WPI_DEB"
-rm -f "$WPI_DEB"
-```
+`pinctrl` is part of the `raspi-utils` package and is preinstalled on Raspberry Pi OS.
+If it is missing, install it with `sudo apt-get install raspi-utils`.
+
+Switching a pin needs no `sudo`, but your user has to be a member of the group
+`gpio` - which is the default on Raspberry Pi OS. Check with `id -nG`.
+
+> **Upgrading from TeleFrame 3.x?** This addon used WiringPi (`gpio -g`) before,
+> which no longer ships with Raspberry Pi OS. Both utilities address the pin by
+> its BCM GPIO number, so your configured `newLedGPIO` stays as it is.
 
 
 ### Configuration options
@@ -42,5 +44,5 @@ The following configuration options are available.
 
 | Name          | Type   | Description                                                      |
 | ------------- | ------ | ---------------------------------------------------------------- |
-| newLedGPIO    | number | **required**: GPIO port to use to switch the LED                |
+| newLedGPIO    | number | **required**: BCM GPIO port to use to switch the LED              |
 | blinkInterval | number | _optional_: duration in milliseconds during the LED is on or off |
