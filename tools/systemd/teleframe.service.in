@@ -17,6 +17,14 @@ RestartSec=5
 # makes the browser process die from a SIGTRAP instead of shutting down - every
 # `systemctl --user stop` then left the unit in "failed (signal)".
 KillMode=mixed
+# Chromium moves its browser process into an own systemd scope
+# (app-teleframe-<pid>.scope) a second or two after start, so from that point on
+# the log lines are no longer attributed to teleframe.service and
+# `journalctl --user-unit=teleframe.service` silently hides most of them -
+# every [Renderer] line, the shutdown messages, and usually "Bot started!".
+# The syslog identifier is bound to the stdout stream instead of the cgroup and
+# survives the move, which makes `journalctl -t teleframe` show the whole log.
+SyslogIdentifier=teleframe
 
 [Install]
 WantedBy=graphical-session.target

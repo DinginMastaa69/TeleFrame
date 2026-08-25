@@ -117,8 +117,13 @@ systemctl --user start teleframe        # start now
 systemctl --user stop teleframe         # stop
 systemctl --user restart teleframe      # restart
 systemctl --user status teleframe       # is it running?
-journalctl --user-unit=teleframe.service -f   # follow the log
+journalctl -t teleframe -f              # follow the log
 ```
+
+Use `journalctl -t teleframe`, not `journalctl --user-unit=teleframe.service`:
+Chromium moves its browser process into a scope of its own shortly after start,
+and the unit filter drops everything logged after that - including all
+`[Renderer]` lines and the shutdown messages.
 
 The service restarts automatically when TeleFrame crashes. There is no separate
 "wait for internet" variant any more - the bot retries on its own when it cannot
