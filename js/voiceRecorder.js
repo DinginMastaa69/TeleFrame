@@ -32,15 +32,28 @@ var VoiceRecorder = class {
   }
 
   init() {
-    if (config.voiceReply === null) {
+    if (this.config.voiceReply === null) {
       this.logger.warn("Voice replies are disabeled");
       return;
     }
 
-    if (config.voiceReply.key !== undefined) {
-      globalShortcut.register(config.voiceReply.key, () => {
-        this.emitter.send("recordButtonPressed");
-      });
+    if (this.config.voiceReply.key !== undefined) {
+      let registered = false;
+      try {
+        registered = globalShortcut.register(this.config.voiceReply.key, () => {
+          this.emitter.send("recordButtonPressed");
+        });
+      } catch (error) {
+        registered = false;
+      }
+      if (!registered) {
+        // globalShortcut requires an X11 grab and is a no-op on Wayland.
+        // The renderer listens for the same key via DOM events.
+        this.logger.warn(
+          `Could not register global shortcut ${this.config.voiceReply.key} - ` +
+          `expected on Wayland. TeleFrame handles this key in the window instead.`
+        );
+      }
     }
 
     this.ipcMain.on('record', (event, chatId, messageId) => {
@@ -120,7 +133,7 @@ var VoiceRecorder = class {
         this.emitter.send("recordStopped");
         this.addonHandler.executeEventCallbacks('recordStopped');
       }.bind(this),
-      config.voiceReply.maxRecordTime
+      this.config.voiceReply.maxRecordTime
     );
   }
 };

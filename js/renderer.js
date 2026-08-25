@@ -1,5 +1,7 @@
 // Imports
-const {remote, ipcRenderer, webFrame} = require("electron");
+const {ipcRenderer, webFrame} = require("electron");
+// `remote` was removed from the Electron core in v14 and lives in its own package now
+const remote = require("@electron/remote");
 const $ = require("jquery");
 window.jQuery = $;
 const Swal = require("sweetalert2");
@@ -221,7 +223,7 @@ ipcRenderer.on('messageBox', function(event, arg) {
 });
 
 ipcRenderer.on('reloadRenderer', function(event, arg) {
-  remote.getCurrentWindow().reload();
+  ipcRenderer.send('reloadWindow');
 });
 
 ipcRenderer.on('imagesUpdated', function(event, arg) {
@@ -681,14 +683,7 @@ function loadImage(isNext, fadeTime, goToLatest = false) {
     delete event.data.currentAsset;
     let $asset = $(this);
     let $assetDiv = $asset.parents('.basecontainer, .imgcontainer').last();
-    const screenAspectRatio = remote
-        .getCurrentWindow()
-        .webContents.getOwnerBrowserWindow()
-        .getBounds().width /
-        remote
-        .getCurrentWindow()
-        .webContents.getOwnerBrowserWindow()
-        .getBounds().height;
+    const screenAspectRatio = window.innerWidth / window.innerHeight;
 
     const assetAspectRatio = ($asset.is('video')
         ? $asset.videoWidth / $asset.videoHeight
@@ -780,6 +775,85 @@ function newImage(sender, type, newImageArray) {
   }).then((value) => {
     currentImageIndex = 0;
     loadImage(false, 0, true);
+  });
+}
+
+/**
+ * Keyboard handling inside the renderer.
+ *
+ * Electron's globalShortcut relies on an X11 grab and is a no-op under
+ * Wayland, which is the default session on Raspberry Pi OS 13 (labwc).
+ * TeleFrame always runs fullscreen and focused, so plain DOM key events
+ * are sufficient - and they keep working on X11/Xwayland as well, where
+ * the main process still registers the same keys globally.
+ */
+const ACCELERATOR_KEY_MAP = {
+  right: 'arrowright',
+  left: 'arrowleft',
+  up: 'arrowup',
+  down: 'arrowdown',
+  space: ' ',
+  return: 'enter',
+  enter: 'enter',
+  esc: 'escape',
+  escape: 'escape',
+  plus: '+',
+  tab: 'tab',
+  backspace: 'backspace',
+  delete: 'delete',
+  insert: 'insert',
+  home: 'home',
+  end: 'end',
+  pageup: 'pageup',
+  pagedown: 'pagedown'
+};
+
+/**
+ * Translates an Electron accelerator name into a KeyboardEvent.key value
+ * @param  {string} accelerator key name from the configuration
+ * @return {string|null}        lowercase KeyboardEvent.key, null if unusable
+ */
+const acceleratorToKey = (accelerator) => {
+  if (typeof accelerator !== 'string' || accelerator.length === 0) {
+    return null;
+  }
+  const name = accelerator.trim().toLowerCase();
+  // modifier combinations (CommandOrControl+X) are left to globalShortcut
+  if (name.indexOf('+') > -1 && name.length > 1) {
+    return null;
+  }
+  return ACCELERATOR_KEY_MAP[name] || name;
+};
+
+const keyBindings = {};
+if (config.keys) {
+  const actions = {next: nextImage, previous: previousImage, play: play, pause: pause};
+  for (const action of Object.keys(actions)) {
+    const key = acceleratorToKey(config.keys[action]);
+    if (key) {
+      keyBindings[key] = actions[action];
+    }
+  }
+}
+if (config.voiceReply && config.voiceReply.key) {
+  const key = acceleratorToKey(config.voiceReply.key);
+  if (key) {
+    keyBindings[key] = record;
+  }
+}
+
+if (Object.keys(keyBindings).length > 0) {
+  logger.info('Renderer key bindings: ' + Object.keys(keyBindings).join(', '));
+  document.addEventListener('keydown', (event) => {
+    // do not steal keys from sweetalert2 inputs
+    if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) {
+      return;
+    }
+    const handler = keyBindings[event.key.toLowerCase()];
+    if (handler) {
+      event.preventDefault();
+      handler();
+    }
   });
 }
 
