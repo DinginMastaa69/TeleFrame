@@ -121,7 +121,7 @@ var ImageWatchdog = class {
 const imageWatchdog = new ImageWatchdog(config.imageFolder, config.imageCount, config.autoDeleteImages, logger);
 var bot = new telebot(imageWatchdog, logger, config);
 
-bot.startBot()
+bot.startBot();
 
 // stop long polling cleanly on shutdown / restart
 ['SIGINT', 'SIGTERM'].forEach((signal) => {
