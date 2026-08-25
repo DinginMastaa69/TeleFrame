@@ -1,5 +1,5 @@
 const { Telegraf } = require("telegraf");
-const { message } = require("telegraf/filters");
+const { message, anyOf } = require("telegraf/filters");
 const download = require("image-downloader");
 const moment = require("moment");
 const exec = require("child_process").exec;
@@ -74,8 +74,14 @@ var Bot = class {
       return next();
     }
 
+    // anyOf(...), not message('photo', 'video', 'document'): a filter built from
+    // several keys requires the message to carry *all* of them, so a single
+    // message() call with three keys matches nothing at all. Telegraf 3's
+    // array form was an OR, this is the equivalent.
+    const isAsset = anyOf(message('photo'), message('video'), message('document'));
+
     //Download incoming assets
-    this.bot.on(message('photo', 'video', 'document'), isChatWhitelisted, (ctx) => {
+    this.bot.on(isAsset, isChatWhitelisted, (ctx) => {
       // Telegraf 4 removed ctx.updateSubTypes, the message itself tells us
       // which kind of asset arrived.
       let fileId;
