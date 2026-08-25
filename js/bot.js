@@ -1,11 +1,13 @@
-const Telegraf = require("telegraf");
-const Telegram = require("telegraf/telegram");
-const Extra = require('telegraf/extra')
+const { Telegraf } = require("telegraf");
+const { message } = require("telegraf/filters");
 const download = require("image-downloader");
 const moment = require("moment");
 const exec = require("child_process").exec;
 const fs = require(`fs`);
 const botReply = require('./botReply');
+
+// file types TeleFrame is able to display
+const SUPPORTED_TYPES = /\.(mp4|jpg|jpeg|gif|png)$/i;
 
 var Bot = class {
   constructor(
@@ -13,20 +15,13 @@ var Bot = class {
     logger,
     config
   ) {
-    var self = this;
     this.bot = new Telegraf(config.botToken);
-    this.telegram = new Telegram(config.botToken);
+    // Telegraf 4 exposes the Telegram API client on the bot instance,
+    // a separate `new Telegram(token)` is no longer needed.
+    this.telegram = this.bot.telegram;
     this.logger = logger;
     this.imageWatchdog = imageWatchdog;
     this.config = config;
-
-    //get bot name
-    this.bot.telegram.getMe().then((botInfo) => {
-      this.bot.options.username = botInfo.username;
-      this.logger.info(
-        "Using bot with name " + this.bot.options.username + "."
-      );
-    });
 
     //Welcome message on bot start
     this.bot.start((ctx) => botReply(ctx, 'welcome'));
@@ -80,32 +75,36 @@ var Bot = class {
     }
 
     //Download incoming assets
-    this.bot.on(['photo', 'video', 'document'], isChatWhitelisted, (ctx) => {
+    this.bot.on(message('photo', 'video', 'document'), isChatWhitelisted, (ctx) => {
+      // Telegraf 4 removed ctx.updateSubTypes, the message itself tells us
+      // which kind of asset arrived.
       let fileId;
-      if (ctx.updateSubTypes.indexOf('photo') > -1) {
+      if (ctx.message.photo) {
         fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-      } else if (ctx.updateSubTypes.indexOf('video') > -1) {
+      } else if (ctx.message.video) {
         fileId = ctx.message.video.file_id
-      } else if (ctx.updateSubTypes.indexOf('document') > -1) {
+      } else if (ctx.message.document) {
         fileId = ctx.message.document.file_id;
       }
 
 
       this.telegram.getFileLink(fileId).then((link) => {
+        // Telegraf 4 resolves getFileLink to a URL object instead of a string
+        const fileUrl = link.href;
         // check for supported file types
-        if (link.match(/\.(mp4|jpg|gif|png)$/) === null) {
+        if (link.pathname.match(SUPPORTED_TYPES) === null) {
           if (config.botReply) {
             botReply(ctx, 'documentFormatError');
           }
           return;
         }
 
-        let fileExtension = '.' + link.split('.').pop();
+        let fileExtension = '.' + link.pathname.split('.').pop().toLowerCase();
 
         if (fileExtension !== '.mp4' || config.showVideos) {
           download
             .image({
-              url: link,
+              url: fileUrl,
               dest: config.imageFolder + "/" + moment().format("x") + fileExtension
             })
             .then(({ filename, image }) => {
@@ -127,7 +126,7 @@ var Bot = class {
               if (config.botReply) {
                 if (fileExtension.match(/\.(mp4|gif)$/)){
                   botReply(ctx, 'videoReceived');
-                } else if (fileExtension.match(/\.(jpg|png)$/)){
+                } else if (fileExtension.match(/\.(jpg|jpeg|png)$/)){
                   botReply(ctx, 'imageReceived');
                 }
               }
@@ -194,12 +193,30 @@ var Bot = class {
 
 
   startBot() {
-    //Start bot
-    var self = this;
-    this.bot.startPolling(30, 100, null, () =>
-      setTimeout(() => self.startBot(), 30000)
-    );
-    this.logger.info("Bot started!");
+    // Telegraf 4: startPolling() is private, launch() is the public entry point.
+    // The returned promise only settles when the bot stops, so a rejection
+    // means polling could not be started (e.g. no network yet at boot time).
+    this.bot
+      .launch({ dropPendingUpdates: false }, () => {
+        this.logger.info("Using bot with name " + this.bot.botInfo.username + ".");
+        this.logger.info("Bot started!");
+      })
+      .catch((err) => {
+        this.logger.error("Bot could not be started: " + (err.stack || err));
+        this.logger.info("Retrying in 30 seconds ...");
+        setTimeout(() => this.startBot(), 30000);
+      });
+  }
+
+  stopBot(reason) {
+    // Stops long polling so restarts do not leave a dangling getUpdates
+    // connection behind. Throws when the bot was never launched.
+    try {
+      this.bot.stop(reason);
+      this.logger.info("Bot stopped.");
+    } catch (err) {
+      this.logger.warn("Bot was not running: " + err.message);
+    }
   }
 
   newImage(src, sender, caption, chatId, chatName, messageId) {
@@ -207,9 +224,9 @@ var Bot = class {
     this.imageWatchdog.newImage(src, sender, caption, chatId, chatName, messageId);
   }
 
-  sendMessage(message) {
+  sendMessage(text) {
     // function to send messages, used for whitlist handling
-    return this.bot.telegram.sendMessage(config.whitelistChats[0], message);
+    return this.telegram.sendMessage(this.config.whitelistChats[0], text);
   }
 
   sendAudio(filename, chatId, messageId) {
@@ -225,7 +242,10 @@ var Bot = class {
             .sendVoice(chatId, {
               source: data
             }, {
-              reply_to_message_id: messageId
+              // reply_to_message_id was replaced by reply_parameters in Bot API 7.0
+              reply_parameters: {
+                message_id: messageId
+              }
             })
             .then(() => {
               this.logger.info("success");

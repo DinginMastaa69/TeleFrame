@@ -122,3 +122,11 @@ const imageWatchdog = new ImageWatchdog(config.imageFolder, config.imageCount, c
 var bot = new telebot(imageWatchdog, logger, config);
 
 bot.startBot()
+
+// stop long polling cleanly on shutdown / restart
+['SIGINT', 'SIGTERM'].forEach((signal) => {
+  process.once(signal, () => {
+    logger.info(`Received ${signal}, stopping bot ...`);
+    bot.stopBot(signal);
+  });
+});

@@ -27,7 +27,7 @@ var i18n = {
   adminActionError: (actionName, errorCode, stderr) => `'${actionName}' ERREUR\n\nCode d'erreur: ${errorCode}\nStdErr: ${stderr}`,
 
   // Admin action triggered execution success
-  adminActionSuccess: (actionName, stdout) => `'${actionName}' SUCCES\n\n${stdout}`
+  adminActionSuccess: (actionName, stdout) => `'${actionName}' SUCCES\n\n${stdout}`,
 
   // video received
   videoReceived: '\u{1F44D}\u{1F3A5}',
