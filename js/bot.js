@@ -4,6 +4,7 @@ const download = require("image-downloader");
 const moment = require("moment");
 const exec = require("child_process").exec;
 const fs = require(`fs`);
+const path = require("path");
 const botReply = require('./botReply');
 
 // file types TeleFrame is able to display
@@ -108,10 +109,20 @@ var Bot = class {
         let fileExtension = '.' + link.pathname.split('.').pop().toLowerCase();
 
         if (fileExtension !== '.mp4' || config.showVideos) {
+          // Path handling, and why it looks like this:
+          // image-downloader 4 resolves a relative dest against its *own*
+          // package directory, so passing "images/1234.jpg" writes to
+          // node_modules/image-downloader/images/ and fails with ENOENT.
+          // Give it an absolute path, but keep storing the relative one - the
+          // rest of TeleFrame (imageWatchdog's images.json, autoDeleteImage,
+          // and the <img src> in the renderer) is relative to the working
+          // directory, and images.json should stay portable.
+          const imagePath = config.imageFolder + "/" + moment().format("x") + fileExtension;
+
           download
             .image({
               url: fileUrl,
-              dest: config.imageFolder + "/" + moment().format("x") + fileExtension
+              dest: path.resolve(imagePath)
             })
             .then(({ filename, image }) => {
               var chatName = ''
@@ -121,7 +132,7 @@ var Bot = class {
                 chatName = ctx.message.from.first_name;
               }
               this.newImage(
-                filename,
+                imagePath,
                 ctx.message.from.first_name,
                 ctx.message.caption,
                 ctx.message.chat.id,
