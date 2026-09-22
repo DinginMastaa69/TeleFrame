@@ -28,7 +28,7 @@
     "electron": "^43.4.1",
     "image-downloader": "^4.3.0",
     "jquery": "^4.0.0",
-    "moment": "^2.30.1",
+    "moment": "^2.31.0",
     "node-audiorecorder": "^3.0.0",
     "node-schedule": "^2.1.1",
     "randomcolor": "^0.6.2",
